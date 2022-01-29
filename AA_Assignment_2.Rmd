@@ -1,0 +1,274 @@
+---
+title: "MATH1324 - Applied Analytics"
+subtitle: "Analysis of reported Family Incidents before and after COVID – 19 Pandemic of Victoria"
+author: "Carla Cruickshanks (S3876232), Jigar Soneji (S3862614), Kajol Singh (S3873248), Prince Nlombi (S3602885)"
+date: "Last updated: `r format(Sys.time(), '%d %B, %Y')`"
+output:
+  slidy_presentation:
+    font_adjustment: 10pt
+    highlight: haddock
+    mathjax: "default"
+---
+
+```{r setup, include=FALSE}
+# Use this chunk to quietly load your pacakges
+
+knitr::opts_chunk$set(
+	fig.align = "center",
+	message = FALSE,
+	warning = FALSE
+)
+# Packages loaded in this chunk will not appear in the presentation. 
+
+library(readxl)
+library(tidyr)
+library(dplyr)
+library(forecast)
+library(car)
+library(magrittr)
+library(granova)
+library(MVN)
+library(ggplot2) # Useful for creating plots
+library(dplyr)  # Useful for data maipulation
+library(knitr) # Useful for creating nice tables
+
+```
+
+# Introduction
+
+- There have been unprecedented government mandated lockdowns between April and October 2020 in Victoria, which has pushed families to live in closer proximity than ever before and with very limited outside freedom. Has the sudden shift in lifestyle caused the average number of family violence incidents to change in 2020 as result of COVID-19 pandemic mandated lockdown in Victoria? 
+
+- On evaluating an article from the ABC news on the 21st March 2021, we were motivated to conduct our own statistical investigations to verify what was reported in the article had statistical merit. The ABC article URL link is located under references.
+
+# Problem Statement
+
+- Have the mandatory government lockdowns between April and October 2020 had any effect on the average number of reported family violence incidents in 2020 in the state of Victoria compared to the previous year?
+
+- In our analysis we will conduct a paired-samples t-test, as we are comparing the mean difference between two years in the same demographic regions to ascertain if there is a change in the mean for the state of Victoria. There are 79 observations of different demographic regions for each year.
+
+- Summary statistics will be performed on the Difference column in family incidents dataset between 2019 and 2020 using the mutate function in R. A qqPlot will be used to visualise the difference and check if the data is normally distributed and identify any outliers between the two years. 
+
+
+# Data
+
+- The family incidents dataset was used, that can be found in the Crime Statistics Agency data tables in the VIC.GOV.AU data website. The dataset contains 5 years of recorded family related violence offences, between 2016 and 2020. There are 79 observations for each year, one for each local government area, overarched by the police region. The police region is where the family incidents were reported.
+
+```{r}
+Family_Incidents <- read_excel("~/UNI-recent/RMIT2021/Applied Analytics-MATH1324/assignment2/Family_Incidents.xlsx")
+cleaned_data <- select(Family_Incidents, c('Year','Police_Region','Local_Government_Area','Family_Incidents')) %>% 
+  filter(Year == "2019" | Year == "2020")
+
+cleaned_data <- cleaned_data[
+  !(cleaned_data$Police_Region=="Justice Institutions and Immigration Facilities"
+  | cleaned_data$Police_Region=="Unincorporated Vic" | cleaned_data$Local_Government_Area=="Total"),]
+head(cleaned_data)
+```
+
+- The dataset was imported using Base R function ‘read_excel’ and given the name Family_Incidents.
+
+- The dataset was converted into a data frame consisting of Year, Police Region, Local Government Area and Family Incidents. The subset was filtered for the years 2019 and 2020 and renamed Cleaned_data. 
+
+- Data prepossessing activities consisted of filtering out the information from the dataset. That is filtering Local_ Government_ Area = “Totals” and Police Region = “Justice Institutions and Immigration Facilities” and “Unincorporated Vic”.
+
+- The cleaned dataset consists of the following variables.
+(1) Year: List of years in which incidents were reported (2016-2020).
+(2) Police Region : List of police regions in Victoria.
+(3) Local Government area : Name of local government in which police region lies.
+(4) Family Incidents : Number of family violences reported. 
+
+# Data Cont.
+
+- Inspection of structure of data.
+
+```{r}
+str(cleaned_data)
+cleaned_data$Police_Region <- factor(cleaned_data$Police_Region,
+                                     levels = c("1 North West Metro","2 Eastern","3 Southern Metro","4 Western"),
+                                     ordered = TRUE)
+levels(cleaned_data$Police_Region)
+str(cleaned_data)
+```
+
+- The structure of the data was checked and it was found that the class of police region is ‘characters’ which was converted into ordered factor using factor function.
+
+# Descriptive Statistics and Visualisation
+
+- Data was summarised and grouped by years for the comparison of family incidents. 
+```{r}
+cleaned_data %>% group_by(Year) %>% summarise(Min = min(Family_Incidents, na.rm = TRUE),
+                                              Q1 = quantile(Family_Incidents,probs = .25,na.rm = TRUE),
+                                              Median = median(Family_Incidents, na.rm = TRUE),
+                                              Q3 = quantile(Family_Incidents,probs = .75,na.rm = TRUE),
+                                              Max = max(Family_Incidents,na.rm = TRUE),
+                                              Mean = mean(Family_Incidents, na.rm = TRUE),
+                                              SD = sd(Family_Incidents, na.rm = TRUE),
+                                              n = n(),
+                                              Missing = sum(is.na(Family_Incidents)))
+```
+
+- From summary statistics, it seems that there is a difference between family incidents of two years, as the mean of year 2020 was slight greater than mean of 2019.
+
+- Other parameters like median, Q1, Q3, minimum, maximum and standard deviation, the difference is there which is not huge but reasonable to say that there is a change in family incidents between two years.
+
+# Decsriptive Statistics Cont.
+
+- Providing a boxplot for selected data and checking for missing values or any special values.
+
+```{r}
+cleaned_data %>% boxplot(Family_Incidents ~ Year, data = .,
+        main ="Family Incidents by Year",
+        ylab="Incidents", col="red")
+
+# To check the special values in the dataset
+
+is.special <- function(x){ if(is.numeric(x))  
+  (is.infinite(x)|is.nan(x)|is.na(x))}
+cleaned_data %>% sapply(function(x) sum(is.special(x)))
+```
+
+-	Some outliers were found in data and they will be dealt in the hypothesis section. 
+-	Special values and Missing values were not found in the dataset.
+
+# Hypothesis Testing
+
+H0 : The COVID 19 pandemic and the number of reported family incidents both independent, therefore the number of reported family incidents remains the same in 2019 and 2020. 
+
+HA : The COVID 19 pandemic and the number of reported family incidents are not independent, therefore the number of reported family incidents has changed between 2019 and 2020 because of the COVID 19 pandemic. 
+
+```{r}
+cleaned_family_incidents <- cleaned_data %>% spread(Year, Family_Incidents)
+
+cleaned_family_incidents <- cleaned_family_incidents %>% mutate(Difference = `2020` - `2019`)
+
+head(cleaned_family_incidents)
+```
+
+-	The dataset was transformed by spreading the year column into two individual columns (2019 and 2020) by family incidents. 
+-	By mutating, Difference column was generated of 2020 and 2019.
+
+- Normalising the data. 
+```{r}
+par(mfrow = c(1,2))
+hist(cleaned_family_incidents$Difference,main = "Difference before Trans.", 
+     xlab = "Values of Difference",col = "green")
+
+Normal_Diff_values <- BoxCox(cleaned_family_incidents$Difference, lambda = "auto")
+
+hist(Normal_Diff_values,main = "Difference before Trans.",
+     xlab = "Values of Normal Difference",
+     col = "blue")
+
+cleaned_family_incidents <- mutate(cleaned_family_incidents, Normal_Diff_values)
+```
+
+- With the help of histogram it was found that the data of Difference column was positively skewed. To overcome this, the BoxCox transformation was applied after which the data of Difference was transformed and a new column ‘family incidents normal’ was introduced which is normally distributed.
+
+- Boxplots to check for outliers. 
+
+```{r}
+par(mfrow = c(1,2))
+boxplot(cleaned_family_incidents$Normal_Diff_values,
+        main = "Before Capping", 
+        ylab = "Frequency",
+        xlab = "Difference of Family Incidents",
+        col = "brown")
+cap <- function(x){
+  quantiles <- quantile( x, c(0.05, 0.25, 0.75, 0.95 ))
+  x[ x < quantiles[2] - 1.5*IQR(x, na.rm = T) ] <- quantiles[1]
+  x[ x > quantiles[3] + 1.5*IQR(x, na.rm = T) ] <- quantiles[4]
+  x}
+cleaned_family_incidents$Normal_Diff_values <- cleaned_family_incidents$Normal_Diff_values %>% cap()
+boxplot(cleaned_family_incidents$Normal_Diff_values,
+        main = "After Capping", 
+        ylab = "Frequency",
+        xlab = "Difference of Family Incidents",
+        col = "Maroon")
+```
+
+-	To identify the possible outliers in the family incidents normal variable, boxplot was plotted. Outliers were found and dealt by capping method
+
+
+# Hypothesis Testing Cont.1 
+
+-	Summary statistics for Difference. 
+
+```{r}
+cleaned_family_incidents %>% summarise(
+                          Min = min(Difference, na.rm = TRUE),
+                          Q1 = quantile(Difference, probs = .25, na.rm = TRUE),
+                          Median = median(Difference, na.rm = TRUE),
+                          Q3 = quantile(Difference, probs = .75, na.rm = TRUE),
+                          Max = max(Difference, na.rm = TRUE),
+                          Mean = mean(Difference, na.rm = TRUE),
+                          SD = sd(Difference, na.rm = TRUE),
+                          n = n(),
+                          Missing = sum(is.na(Difference)))
+```
+
+- Q-Q plot.
+
+```{r}
+qqPlot(Normal_Diff_values, dist="norm")
+```
+
+-	The qqplot was also plotted for checking the normality of family incidents normal. We check to see if the data points fall within the dashed blue lines. These blue lines correspond to 95% CI for the normal quantiles. It can be seen that some points are falling outside the tails of the distribution of family incidents normal variable. This suggests the tails are heavier than what we would expect under a normal distribution. Fortunately, due to the large sample size, n=79 it is not the concern about the normality.
+
+# Hypthesis Testing Cont.2
+
+$$H_0: \bar{d}= \ 0$$
+
+$$H_A: \bar{d} \ne \ 0$$
+- Paired t-test.
+
+```{r}
+t.test(cleaned_family_incidents$`2020`, cleaned_family_incidents$`2019`,
+       paired = TRUE,
+       alternative = "two.sided",
+       conf.level = .95)
+
+qt(p = 0.025, df = 78)
+```
+
+- By performing paired t – test, it appears that the value of  p is very small, < 0.01 and value of α is 0.025 (Since hypothesis is two tailed). It is obvious that p < α, hence H0 is rejected. 
+- Also, the critical values are ± 1.99. As t = 5.45 is more extreme than − 1.99, H0 should be rejected. 
+There was a statistically significant mean difference between the family incidents before and after pandemic, between 2019 and 2020.
+- In addition, the mean of difference is 99.75, which also indicates there is a difference between the incidents over the two years.
+
+p-value Approach:
+
+If p < α, Reject H0
+
+If p > α, Fail to reject H0
+
+Confidence Interval Approach:
+
+If the 95% CI does not capture H0, reject H0
+
+If the 95% captures H0, fail to reject H0
+
+# Discussion
+
+- The aim of the hypothesis testing was to figure out whether there is change in family incidents before and after COVID–19 pandemic. 
+
+- The summary statistics reported between 2019 and 2020 highlights that the mean number of incidents increased by 99.75 in 2020, and the median increased by 116. The movement in median is higher than the mean which suggested that the tail of by distribution is positively skewed. The interquartile range has reduced by 13 incidents in 2020, minimum and maximum incidents increased by 6 and 715 incidents respectively in 2020. The standard deviation in 2020 was 1137.18 which was increased by 110.4. The distribution was widely distributed which suggested the data is not normally distributed which was transformed with the help of BoxCox transformation. 
+
+- The paired sample t-test was used to test for a significant mean difference between the reported family incidents before and during COVID–19 pandemic. The value of t is 5.45,which is significantly more extreme than critical value of -1.9, the (df = 78)and (SD = 162.66). The visual inspection of the Q-Q plot highlighted the difference in values that  the data was approximately normally distributed. The paired-sample t-test found a statistically significant mean difference between family incidents before and during the COVID–19 pandemic, the value of p < 0.01, and 95% CI [63.31,136.18], hence H0 is rejected as the p-value < 0.01 < α .025. Reported family incidents were found to be significantly increased over the duration of COVID–19 pandemic in Victoria. 
+
+- Future Investigation Direction:
+The data captures all family incidents, some of which may not lead to criminal investigations. Therefore may overstate the numbers. To have a better upstanding of criminal related family violence incidents another dataset within the https://discover.data.vic.gov.au maybe more appropriate for further analysis in this area.
+
+- Strengths:
+(1) The data was complete with no missing observations.  
+(2) The data was clean on import, there was only a minor change to one variable type, and the Numeric variable contained no delimiter like comma(',').
+(3) The data was complete, and consisted all all reported incidents in Victoria.
+
+- Limitations:
+(1) Family incidents data were compiled based on the date that the incident was created on the LEAP database, rather than the date the incident was detected by, or reported to police.
+(2)For simplicity, family incidents were used in favour of the variable 'Rate_per_100,000_population'. The assumption was made that the change in the population between local government areas was not substantial between the 2-year period and therefore would not impact the results.
+
+# References
+The URL link to the article: 
+https://www.abc.net.au/news/2021-03-18/victorian-crime-statistics-coronavirus-pandemic-family-violence/100016152
+
+The link for data is:  
+https://discover.data.vic.gov.au/dataset/data-tables-family-incidentss
